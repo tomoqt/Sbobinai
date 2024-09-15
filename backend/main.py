@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
 import openai
-from pydub import AudioSegment
 
 # Load environment variables
 load_dotenv()
@@ -14,7 +13,6 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 # Environment variables
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "whisper-1")
 GPT_MODEL = os.getenv("GPT_MODEL", "gpt-4o-mini")
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 
 # Create necessary directories
 os.makedirs("uploads", exist_ok=True)
@@ -38,31 +36,20 @@ async def test_upload_audio(file: UploadFile = File(...)):
     with open(file_path, "wb") as buffer:
         buffer.write(await file.read())
     
-    # Convert Opus to WAV for Whisper API
-    audio = AudioSegment.from_file(file_path, format="opus")
-    wav_path = file_path.rsplit(".", 1)[0] + ".wav"
-    audio.export(wav_path, format="wav")
-    
-    with open(wav_path, "rb") as audio_file:
+    with open(file_path, "rb") as audio_file:
         transcript = openai.Audio.transcribe(WHISPER_MODEL, audio_file)
     
-    # Clean up temporary files
+    # Clean up temporary file
     os.remove(file_path)
-    os.remove(wav_path)
     
-    chunks = split_text(transcript['text'], CHUNK_SIZE)
-    processed_chunks = []
-    for chunk in chunks:
-        response = openai.ChatCompletion.create(
-            model=GPT_MODEL,
-            messages=[
-                {"role": "system", "content": "Sei un assistente utile che struttura il testo in un formato markdown leggibile."},
-                {"role": "user", "content": f"Per favore, struttura questo testo in un formato markdown leggibile, mantenendo il contenuto estremamente fedele all'originale: {chunk}"}
-            ]
-        )
-        processed_chunks.append(response.choices[0].message['content'])
-    
-    final_text = "\n\n".join(processed_chunks)
+    response = openai.ChatCompletion.create(
+        model=GPT_MODEL,
+        messages=[
+            {"role": "system", "content": "Sei un assistente utile che struttura il testo in un formato markdown leggibile."},
+            {"role": "user", "content": f"Per favore, struttura questo testo in un formato markdown leggibile, mantenendo il contenuto estremamente fedele all'originale: {transcript['text']}"}
+        ]
+    )
+    final_text = response.choices[0].message['content']
     
     processed_file_path = os.path.join("processed", f"{file.filename}.md")
     with open(processed_file_path, "w") as f:
@@ -79,9 +66,6 @@ async def test_get_text(filename: str):
         return {"content": content}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File non trovato")
-
-def split_text(text: str, chunk_size: int = CHUNK_SIZE):
-    return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
 if __name__ == "__main__":
     import uvicorn
